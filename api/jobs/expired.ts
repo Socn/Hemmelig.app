@@ -1,6 +1,19 @@
 import { unlink } from 'fs/promises';
 import prisma from '../lib/db';
 
+export const ORPHANED_FILE_GRACE_PERIOD_MS = 60 * 60 * 1000;
+
+export function buildOrphanedFilesWhere(now = new Date()) {
+    return {
+        createdAt: {
+            lt: new Date(now.getTime() - ORPHANED_FILE_GRACE_PERIOD_MS),
+        },
+        secrets: {
+            none: {},
+        },
+    };
+}
+
 export const deleteExpiredSecrets = async () => {
     try {
         const now = new Date();
@@ -27,11 +40,7 @@ export const deleteOrphanedFiles = async () => {
     try {
         // Find files that are not associated with any secret
         const orphanedFiles = await prisma.file.findMany({
-            where: {
-                secrets: {
-                    none: {},
-                },
-            },
+            where: buildOrphanedFilesWhere(),
         });
 
         if (orphanedFiles.length === 0) {
