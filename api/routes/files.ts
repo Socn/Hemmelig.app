@@ -1,17 +1,44 @@
 import { zValidator } from '@hono/zod-validator';
 import { createReadStream, createWriteStream } from 'fs';
+import { unlink } from 'fs/promises';
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import { nanoid } from 'nanoid';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import prisma from '../lib/db';
-import { generateSafeFilePath, getMaxFileSize, isPathSafe } from '../lib/files';
+import {
+    decodeUploadFilenameHeader,
+    generateSafeFilePath,
+    getMaxFileSize,
+    getUploadSizeFromHeaders,
+    isPathSafe,
+} from '../lib/files';
 import { resolveSettings } from '../lib/settings';
 import { authMiddleware } from '../middlewares/auth';
 import { idParamSchema } from '../validations/shared';
 
 const files = new Hono();
+
+async function removePartialUpload(path: string): Promise<void> {
+    try {
+        await unlink(path);
+    } catch {
+        // Best-effort cleanup; the original upload error is more useful to report.
+    }
+}
+
+async function writeUploadStream(
+    streamToWrite: NodeJS.ReadableStream,
+    path: string
+): Promise<void> {
+    try {
+        await pipeline(streamToWrite, createWriteStream(path));
+    } catch (error) {
+        await removePartialUpload(path);
+        throw error;
+    }
+}
 
 files.get('/:id', zValidator('param', idParamSchema), async (c) => {
     const { id } = c.req.valid('param');
@@ -82,6 +109,47 @@ files.post('/', authMiddleware, async (c) => {
             return c.json({ error: 'File uploads are disabled on this instance.' }, 403);
         }
 
+        const maxFileSize = await getMaxFileSize();
+        const rawFilename = decodeUploadFilenameHeader(c.req.header('X-File-Name'));
+
+        if (rawFilename) {
+            const fileSize = getUploadSizeFromHeaders(c.req.raw.headers);
+            if (fileSize === null) {
+                return c.json({ error: 'File size is required.' }, 400);
+            }
+
+            if (fileSize > maxFileSize) {
+                return c.json(
+                    { error: `File size exceeds the limit of ${maxFileSize / 1024 / 1024}MB.` },
+                    413
+                );
+            }
+
+            if (!c.req.raw.body) {
+                return c.json({ error: 'File body is required.' }, 400);
+            }
+
+            const id = nanoid();
+            const safePath = generateSafeFilePath(id, rawFilename);
+
+            if (!safePath) {
+                console.error(`Path traversal attempt in upload: ${rawFilename}`);
+                return c.json({ error: 'Invalid filename' }, 400);
+            }
+
+            const nodeStream = Readable.fromWeb(
+                c.req.raw.body as import('stream/web').ReadableStream
+            );
+
+            await writeUploadStream(nodeStream, safePath.path);
+
+            const newFile = await prisma.file.create({
+                data: { id, filename: safePath.filename, path: safePath.path },
+            });
+
+            return c.json({ id: newFile.id }, 201);
+        }
+
         const body = await c.req.parseBody();
         const file = body['file'];
 
@@ -89,7 +157,6 @@ files.post('/', authMiddleware, async (c) => {
             return c.json({ error: 'File is required and must be a file.' }, 400);
         }
 
-        const maxFileSize = await getMaxFileSize();
         if (file.size > maxFileSize) {
             return c.json(
                 { error: `File size exceeds the limit of ${maxFileSize / 1024 / 1024}MB.` },
@@ -108,9 +175,7 @@ files.post('/', authMiddleware, async (c) => {
         // Stream the file to disk instead of loading it entirely into memory
         const webStream = file.stream();
         const nodeStream = Readable.fromWeb(webStream as import('stream/web').ReadableStream);
-        const writeStream = createWriteStream(safePath.path);
-
-        await pipeline(nodeStream, writeStream);
+        await writeUploadStream(nodeStream, safePath.path);
 
         const newFile = await prisma.file.create({
             data: { id, filename: safePath.filename, path: safePath.path },

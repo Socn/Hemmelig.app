@@ -3,15 +3,21 @@ import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
+import { formatUploadSpeed, getFileUploadKey, type FileUploadProgress } from '../lib/fileUpload';
 import { useHemmeligStore } from '../store/hemmeligStore';
 import { useUserStore } from '../store/userStore';
 
 interface FileUploadProps {
     onFileChange: (files: File[]) => void;
+    uploadProgress?: Record<string, FileUploadProgress>;
     compact?: boolean;
 }
 
-export function FileUpload({ onFileChange, compact = false }: FileUploadProps) {
+export function FileUpload({
+    onFileChange,
+    uploadProgress = {},
+    compact = false,
+}: FileUploadProps) {
     const { t } = useTranslation();
     const { user } = useUserStore();
     const { settings: instanceSettings } = useHemmeligStore();
@@ -127,28 +133,66 @@ export function FileUpload({ onFileChange, compact = false }: FileUploadProps) {
             </div>
             {files.length > 0 && (
                 <div className="mt-3 space-y-2">
-                    {files.map((file, index) => (
-                        <div
-                            key={index}
-                            className="flex items-center justify-between bg-gray-100 dark:bg-dark-700/50 p-2"
-                        >
-                            <div className="flex items-center space-x-2">
-                                <FileIcon className="w-4 h-4 text-gray-500 dark:text-slate-400" />
-                                <span className="text-sm text-gray-600 dark:text-slate-300">
-                                    {file.name}
-                                </span>
-                            </div>
-                            <button
-                                onClick={() => removeFile(file)}
-                                className="p-1 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"
-                            >
-                                <X className="w-4 h-4" />
-                            </button>
-                        </div>
+                    {files.map((file) => (
+                        <FileUploadRow
+                            key={getFileUploadKey(file)}
+                            file={file}
+                            progress={uploadProgress[getFileUploadKey(file)]}
+                            onRemove={removeFile}
+                            uploadingText={t('file_upload.uploading')}
+                        />
                     ))}
                 </div>
             )}
             {fileError && <p className="text-red-500 text-xs mt-2">{fileError}</p>}
+        </div>
+    );
+}
+
+interface FileUploadRowProps {
+    file: File;
+    progress?: FileUploadProgress;
+    uploadingText: string;
+    onRemove: (file: File) => void;
+}
+
+function FileUploadRow({ file, progress, uploadingText, onRemove }: FileUploadRowProps) {
+    const isUploading = progress && progress.percent < 100;
+
+    return (
+        <div className="bg-gray-100 dark:bg-dark-700/50 p-2">
+            <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center space-x-2">
+                    <FileIcon className="h-4 w-4 flex-shrink-0 text-gray-500 dark:text-slate-400" />
+                    <span className="truncate text-sm text-gray-600 dark:text-slate-300">
+                        {file.name}
+                    </span>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => onRemove(file)}
+                    className="p-1 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"
+                >
+                    <X className="h-4 w-4" />
+                </button>
+            </div>
+
+            {progress && (
+                <div className="mt-2 space-y-1">
+                    <div className="h-1.5 w-full bg-gray-200 dark:bg-dark-600">
+                        <div
+                            className="h-full bg-teal-500 transition-all duration-200"
+                            style={{ width: `${progress.percent}%` }}
+                        />
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-slate-400">
+                        <span>{isUploading ? uploadingText : `${progress.percent}%`}</span>
+                        <span>
+                            {progress.percent}% · {formatUploadSpeed(progress.bytesPerSecond)}
+                        </span>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

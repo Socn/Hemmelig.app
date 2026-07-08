@@ -1,5 +1,5 @@
 import { mkdir } from 'fs/promises';
-import { basename, join, resolve } from 'path';
+import { basename, isAbsolute, join, relative, resolve } from 'path';
 import { FILE } from './constants';
 import { resolveSettings } from './settings';
 
@@ -23,7 +23,8 @@ function sanitizeFilename(filename: string): string {
  */
 export function isPathSafe(filePath: string): boolean {
     const resolvedPath = resolve(filePath);
-    return resolvedPath.startsWith(UPLOAD_DIR + '/') || resolvedPath === UPLOAD_DIR;
+    const relativePath = relative(UPLOAD_DIR, resolvedPath);
+    return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
 }
 
 /**
@@ -71,6 +72,32 @@ export function generateSafeFilePath(
     }
 
     return { filename, path };
+}
+
+export function decodeUploadFilenameHeader(value: string | null | undefined): string | null {
+    if (!value) {
+        return null;
+    }
+
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return null;
+    }
+}
+
+export function getUploadSizeFromHeaders(headers: Headers): number | null {
+    const rawSize = headers.get('X-File-Size') ?? headers.get('Content-Length');
+    if (!rawSize) {
+        return null;
+    }
+
+    const size = Number(rawSize);
+    if (!Number.isSafeInteger(size) || size < 0) {
+        return null;
+    }
+
+    return size;
 }
 
 // Initialize upload directory on module load

@@ -99,7 +99,16 @@ app.use(async (c, next) => {
 app.use(logger());
 app.use(trimTrailingSlash());
 app.use(`/*`, requestId());
-app.use(`/*`, timeout(15 * 1000)); // 15 seconds timeout to the API calls
+app.use(`/*`, async (c, next) => {
+    const isFileUpload =
+        c.req.method === 'POST' && (c.req.path === '/files' || c.req.path === '/api/files');
+
+    if (isFileUpload) {
+        return next();
+    }
+
+    return timeout(15 * 1000)(c, next); // 15 seconds timeout to the API calls
+});
 app.use(ratelimit);
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/ETag

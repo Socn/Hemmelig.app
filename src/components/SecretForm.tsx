@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { encrypt, encryptFile, generateEncryptionKey, generateSalt } from '../lib/crypto';
+import {
+    getFileUploadKey,
+    uploadFileWithProgress,
+    type FileUploadProgress,
+} from '../lib/fileUpload';
 import { useSecretStore } from '../store/secretStore';
 import { Card } from './Card';
 import { CreateButton } from './CreateButton';
@@ -27,6 +32,7 @@ export function SecretForm() {
 
     const [isLoading, setIsLoading] = useState(false);
     const [files, setFiles] = useState<File[]>([]);
+    const [uploadProgress, setUploadProgress] = useState<Record<string, FileUploadProgress>>({});
     const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
 
@@ -39,7 +45,18 @@ export function SecretForm() {
         const fileIds = [];
         if (files.length > 0) {
             for (const file of files) {
+                const fileKey = getFileUploadKey(file);
                 try {
+                    setUploadProgress((current) => ({
+                        ...current,
+                        [fileKey]: {
+                            loaded: 0,
+                            total: file.size,
+                            percent: 0,
+                            bytesPerSecond: 0,
+                        },
+                    }));
+
                     const encryptedFile = await encryptFile(
                         await file.arrayBuffer(),
                         encryptionKey,
@@ -49,17 +66,18 @@ export function SecretForm() {
                         type: file.type,
                     });
 
-                    const response = await api.files.$post({
-                        form: {
-                            file: encryptedFileAsFile,
+                    const data = await uploadFileWithProgress({
+                        file: encryptedFileAsFile,
+                        filename: file.name,
+                        onProgress: (progress) => {
+                            setUploadProgress((current) => ({
+                                ...current,
+                                [fileKey]: progress,
+                            }));
                         },
                     });
-                    const data = await response.json();
-                    if (response.ok) {
-                        fileIds.push(data.id);
-                    } else {
-                        throw new Error(data.error || 'File upload failed');
-                    }
+
+                    fileIds.push(data.id);
                 } catch (error) {
                     setErrorMessage(
                         t('secret_form.failed_to_upload_file', { fileName: file.name })
@@ -135,7 +153,11 @@ export function SecretForm() {
                 {/* File upload and quick create button */}
                 <div className="mt-5 flex flex-col sm:flex-row gap-4 sm:items-start">
                     <div className="flex-1">
-                        <FileUpload onFileChange={setFiles} compact />
+                        <FileUpload
+                            onFileChange={setFiles}
+                            uploadProgress={uploadProgress}
+                            compact
+                        />
                     </div>
                     <div className="sm:flex-shrink-0">
                         <CreateButton
