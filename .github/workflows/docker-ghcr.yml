@@ -1,0 +1,50 @@
+name: Build GHCR Docker image
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+            - upload-progress-reliability
+
+permissions:
+    contents: read
+    packages: write
+
+jobs:
+    docker:
+        name: Build and push GHCR image
+        runs-on: ubuntu-latest
+        steps:
+            - name: Check out the repo
+              uses: actions/checkout@v6
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v4
+
+            - name: Setup Docker buildx
+              uses: docker/setup-buildx-action@v4
+
+            - name: Log in to GitHub Container Registry
+              uses: docker/login-action@v4
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Get short SHA
+              id: short_sha
+              run: echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+            - name: Build and push multi-arch image
+              uses: docker/build-push-action@v7
+              with:
+                  context: .
+                  platforms: linux/amd64,linux/arm64
+                  push: true
+                  tags: |
+                      ghcr.io/socn/hemmelig.app:upload-progress
+                      ghcr.io/socn/hemmelig.app:${{ steps.short_sha.outputs.sha }}
+                  build-args: |
+                      GIT_SHA=${{ steps.short_sha.outputs.sha }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
